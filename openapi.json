@@ -1,0 +1,4912 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Ponto de Vendas (PDV) API",
+    "description": "## Apresentação\nAPI REST de um ponto de vendas de roupas. Ela gerencia clientes, categorias, produtos, estoque e vendas,\ncom Java 17, Spring Boot, Spring Data JPA, H2, Spring HATEOAS e Springdoc OpenAPI.\n\n## Comece aqui\nExecute `./mvnw spring-boot:run` e abra `/swagger-ui/index.html`. Cadastre categoria, cliente, produto e\nestoque antes de registrar uma venda. Listagens aceitam `page`, `size` (máximo 100) e `sort=campo,asc`.\nRespostas de recursos trazem links HATEOAS em `_links`; erros usam `application/problem+json`.\n\n## Versões\nA V1 preserva os contratos existentes em `/api/**`.\nA V2 usa `/api/v2/**`, requer `X-API-Version: 2` e acrescenta API Key, rate limiting e idempotência\npara criação de vendas. Um header de versão inválido na V2 retorna 400.\n\n## Códigos principais\n`200` consulta/alteração, `201` criação, `204` exclusão, `400` dados ou versão inválidos, `401` API Key\nausente/inválida, `404` não encontrado, `409` conflito de regra ou idempotência e `429` limite excedido.\n\n## Autenticação por API Key\nPrimeiro envie `POST /api/v2/auth/login` com `X-API-Version: 2`, e-mail e senha válidos. A resposta contém\n`apiKey` apenas nessa emissão. Clique em **Authorize** e informe essa chave no campo `X-API-Key` para os\ndemais endpoints V2. `POST /api/v2/auth/logout` revoga a chave atual.\n\n## Idempotência de vendas\nEm `POST /api/v2/vendas`, informe também `X-Idempotency-Key` (por exemplo, um UUID). A mesma chave com o\nmesmo corpo retorna `201` e o corpo original, com `Idempotent-Replayed: true`, sem nova baixa de estoque.\nA mesma chave com corpo diferente retorna `409`. Os registros expiram após 24 horas.\n\n## Rate limiting\nO padrão é 60 requisições por minuto por usuário autenticado; o login usa o IP. Verifique\n`X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` e `Retry-After`. Ao exceder a janela,\na API retorna `429`. A estratégia persiste os contadores no banco; em múltiplas instâncias, use um banco\ncompartilhado e coordenação distribuída adicional para obter uma janela global estrita.\n\n## Ordem recomendada de cadastro\nCrie uma categoria, depois um cliente, produto e estoque. Por fim, registre a venda em `/api/v2/vendas`.\n",
+    "contact": {
+      "name": "José Caique",
+      "url": "https://github.com/caiquedevbr",
+      "email": "jcaique825@gmail.com"
+    },
+    "license": {
+      "name": "MIT",
+      "url": "https://mit-license.org/"
+    },
+    "version": "2.0.0"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8080",
+      "description": "Generated server url"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Categorias",
+      "description": "Gerenciamento de categorias"
+    },
+    {
+      "name": "Clientes",
+      "description": "Gerenciamento de clientes"
+    },
+    {
+      "name": "Vendas",
+      "description": "Registro de vendas e baixa transacional de estoque."
+    },
+    {
+      "name": "Vendas",
+      "description": "Gerenciamento de vendas"
+    },
+    {
+      "name": "Produtos",
+      "description": "Gerenciamento de produtos"
+    },
+    {
+      "name": "Estoques",
+      "description": "Gerenciamento de estoques"
+    },
+    {
+      "name": "Autenticação",
+      "description": "Geração e gerenciamento de chaves de API para usuários do Sistema PDV."
+    }
+  ],
+  "paths": {
+    "/api/v2/vendas/{id}": {
+      "get": {
+        "tags": [
+          "Vendas"
+        ],
+        "summary": "Buscar venda por ID",
+        "operationId": "listarPorId",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identificador da venda",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "description": "Obrigatório na V2; use exatamente o valor 2.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Venda encontrada",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityModelVenda"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Venda não encontrada",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key ausente, inválida ou revogada.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requisições excedido. Consulte Retry-After antes de tentar novamente.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "description": "Limite configurado por minuto.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 60
+                }
+              },
+              "X-RateLimit-Remaining": {
+                "description": "Requisições restantes na janela atual.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 0
+                }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp do início da próxima janela.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "Retry-After": {
+                "description": "Segundos até uma nova tentativa.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 30
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Vendas"
+        ],
+        "summary": "Atualizar venda",
+        "description": "Atualiza cliente, forma de pagamento e produtos; o saldo anterior é devolvido antes da nova baixa.",
+        "operationId": "atualizar",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identificador da venda",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "description": "Obrigatório na V2; use exatamente o valor 2.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Venda"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Venda atualizada com sucesso",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityModelVenda"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Venda não encontrada",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Dados inválidos",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Estoque inexistente ou insuficiente",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key ausente, inválida ou revogada.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requisições excedido. Consulte Retry-After antes de tentar novamente.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "description": "Limite configurado por minuto.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 60
+                }
+              },
+              "X-RateLimit-Remaining": {
+                "description": "Requisições restantes na janela atual.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 0
+                }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp do início da próxima janela.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "Retry-After": {
+                "description": "Segundos até uma nova tentativa.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 30
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Vendas"
+        ],
+        "summary": "Excluir venda",
+        "operationId": "deletar",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identificador da venda",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "description": "Obrigatório na V2; use exatamente o valor 2.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Venda excluída com sucesso"
+          },
+          "404": {
+            "description": "Venda não encontrada",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Não foi possível estornar o estoque da venda",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key ausente, inválida ou revogada.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requisições excedido. Consulte Retry-After antes de tentar novamente.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "description": "Limite configurado por minuto.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 60
+                }
+              },
+              "X-RateLimit-Remaining": {
+                "description": "Requisições restantes na janela atual.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 0
+                }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp do início da próxima janela.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "Retry-After": {
+                "description": "Segundos até uma nova tentativa.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 30
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v2/produtos/{id}": {
+      "get": {
+        "tags": [
+          "Produtos"
+        ],
+        "summary": "Buscar produto por ID",
+        "operationId": "listarPorId_1",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identificador do produto",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "description": "Obrigatório na V2; use exatamente o valor 2.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Produto encontrado",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityModelProduto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Produto não encontrado",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key ausente, inválida ou revogada.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requisições excedido. Consulte Retry-After antes de tentar novamente.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "description": "Limite configurado por minuto.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 60
+                }
+              },
+              "X-RateLimit-Remaining": {
+                "description": "Requisições restantes na janela atual.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 0
+                }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp do início da próxima janela.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "Retry-After": {
+                "description": "Segundos até uma nova tentativa.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 30
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Produtos"
+        ],
+        "summary": "Atualizar produto",
+        "description": "Substitui os dados do produto identificado pelo ID.",
+        "operationId": "atualizar_1",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identificador do produto",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "description": "Obrigatório na V2; use exatamente o valor 2.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Produto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Produto atualizado com sucesso",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityModelProduto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Produto não encontrado",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Dados inválidos",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key ausente, inválida ou revogada.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requisições excedido. Consulte Retry-After antes de tentar novamente.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "description": "Limite configurado por minuto.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 60
+                }
+              },
+              "X-RateLimit-Remaining": {
+                "description": "Requisições restantes na janela atual.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 0
+                }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp do início da próxima janela.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "Retry-After": {
+                "description": "Segundos até uma nova tentativa.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 30
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Produtos"
+        ],
+        "summary": "Excluir produto",
+        "operationId": "deletar_1",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identificador do produto",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "description": "Obrigatório na V2; use exatamente o valor 2.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Produto excluído com sucesso"
+          },
+          "404": {
+            "description": "Produto não encontrado",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Produto possui estoque ou vendas vinculados",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key ausente, inválida ou revogada.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requisições excedido. Consulte Retry-After antes de tentar novamente.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "description": "Limite configurado por minuto.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 60
+                }
+              },
+              "X-RateLimit-Remaining": {
+                "description": "Requisições restantes na janela atual.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 0
+                }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp do início da próxima janela.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "Retry-After": {
+                "description": "Segundos até uma nova tentativa.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 30
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v2/estoques/{id}": {
+      "get": {
+        "tags": [
+          "Estoques"
+        ],
+        "summary": "Buscar estoque por ID",
+        "operationId": "listarPorId_2",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identificador do estoque",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "description": "Obrigatório na V2; use exatamente o valor 2.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Estoque encontrado",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityModelEstoque"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Estoque não encontrado",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key ausente, inválida ou revogada.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requisições excedido. Consulte Retry-After antes de tentar novamente.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "description": "Limite configurado por minuto.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 60
+                }
+              },
+              "X-RateLimit-Remaining": {
+                "description": "Requisições restantes na janela atual.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 0
+                }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp do início da próxima janela.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "Retry-After": {
+                "description": "Segundos até uma nova tentativa.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 30
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Estoques"
+        ],
+        "summary": "Atualizar estoque",
+        "description": "Atualiza quantidade, mínimo e produto do registro de estoque.",
+        "operationId": "atualizar_2",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identificador do estoque",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "description": "Obrigatório na V2; use exatamente o valor 2.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Estoque"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Estoque atualizado com sucesso",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityModelEstoque"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Estoque não encontrado",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Dados inválidos",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Produto já possui estoque cadastrado",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key ausente, inválida ou revogada.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requisições excedido. Consulte Retry-After antes de tentar novamente.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "description": "Limite configurado por minuto.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 60
+                }
+              },
+              "X-RateLimit-Remaining": {
+                "description": "Requisições restantes na janela atual.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 0
+                }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp do início da próxima janela.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "Retry-After": {
+                "description": "Segundos até uma nova tentativa.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 30
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Estoques"
+        ],
+        "summary": "Excluir estoque",
+        "operationId": "deletar_2",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identificador do estoque",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "description": "Obrigatório na V2; use exatamente o valor 2.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Estoque excluído com sucesso"
+          },
+          "404": {
+            "description": "Estoque não encontrado",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key ausente, inválida ou revogada.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requisições excedido. Consulte Retry-After antes de tentar novamente.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "description": "Limite configurado por minuto.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 60
+                }
+              },
+              "X-RateLimit-Remaining": {
+                "description": "Requisições restantes na janela atual.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 0
+                }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp do início da próxima janela.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "Retry-After": {
+                "description": "Segundos até uma nova tentativa.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 30
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v2/clientes/{id}": {
+      "get": {
+        "tags": [
+          "Clientes"
+        ],
+        "summary": "Buscar cliente por ID",
+        "operationId": "listarPorId_3",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identificador do cliente",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "description": "Obrigatório na V2; use exatamente o valor 2.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cliente encontrado",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityModelCliente"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Cliente não encontrado",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key ausente, inválida ou revogada.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requisições excedido. Consulte Retry-After antes de tentar novamente.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "description": "Limite configurado por minuto.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 60
+                }
+              },
+              "X-RateLimit-Remaining": {
+                "description": "Requisições restantes na janela atual.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 0
+                }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp do início da próxima janela.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "Retry-After": {
+                "description": "Segundos até uma nova tentativa.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 30
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Clientes"
+        ],
+        "summary": "Atualizar cliente",
+        "description": "Substitui os dados do cliente identificado pelo ID.",
+        "operationId": "atualizar_3",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identificador do cliente",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "description": "Obrigatório na V2; use exatamente o valor 2.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Cliente"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Cliente atualizado com sucesso",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityModelCliente"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Cliente não encontrado",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Dados inválidos",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "CPF já cadastrado",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key ausente, inválida ou revogada.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requisições excedido. Consulte Retry-After antes de tentar novamente.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "description": "Limite configurado por minuto.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 60
+                }
+              },
+              "X-RateLimit-Remaining": {
+                "description": "Requisições restantes na janela atual.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 0
+                }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp do início da próxima janela.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "Retry-After": {
+                "description": "Segundos até uma nova tentativa.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 30
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Clientes"
+        ],
+        "summary": "Excluir cliente",
+        "operationId": "deletar_3",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identificador do cliente",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "description": "Obrigatório na V2; use exatamente o valor 2.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Cliente excluído com sucesso"
+          },
+          "404": {
+            "description": "Cliente não encontrado",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Cliente possui vendas vinculadas",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key ausente, inválida ou revogada.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requisições excedido. Consulte Retry-After antes de tentar novamente.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "description": "Limite configurado por minuto.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 60
+                }
+              },
+              "X-RateLimit-Remaining": {
+                "description": "Requisições restantes na janela atual.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 0
+                }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp do início da próxima janela.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "Retry-After": {
+                "description": "Segundos até uma nova tentativa.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 30
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v2/categorias/{id}": {
+      "get": {
+        "tags": [
+          "Categorias"
+        ],
+        "summary": "Buscar categoria por ID",
+        "operationId": "listarPorId_4",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identificador da categoria",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "description": "Obrigatório na V2; use exatamente o valor 2.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Categoria encontrada",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityModelCategoria"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Categoria não encontrada",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key ausente, inválida ou revogada.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requisições excedido. Consulte Retry-After antes de tentar novamente.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "description": "Limite configurado por minuto.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 60
+                }
+              },
+              "X-RateLimit-Remaining": {
+                "description": "Requisições restantes na janela atual.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 0
+                }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp do início da próxima janela.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "Retry-After": {
+                "description": "Segundos até uma nova tentativa.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 30
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Categorias"
+        ],
+        "summary": "Atualizar categoria",
+        "description": "Substitui os dados da categoria identificada pelo ID.",
+        "operationId": "atualizar_4",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identificador da categoria",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "description": "Obrigatório na V2; use exatamente o valor 2.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Categoria"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Categoria atualizada com sucesso",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityModelCategoria"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Categoria não encontrada",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Dados inválidos",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Nome de categoria já cadastrado",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key ausente, inválida ou revogada.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requisições excedido. Consulte Retry-After antes de tentar novamente.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "description": "Limite configurado por minuto.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 60
+                }
+              },
+              "X-RateLimit-Remaining": {
+                "description": "Requisições restantes na janela atual.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 0
+                }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp do início da próxima janela.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "Retry-After": {
+                "description": "Segundos até uma nova tentativa.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 30
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Categorias"
+        ],
+        "summary": "Excluir categoria",
+        "operationId": "deletar_4",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identificador da categoria",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "description": "Obrigatório na V2; use exatamente o valor 2.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Categoria excluída com sucesso"
+          },
+          "404": {
+            "description": "Categoria não encontrada",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Categoria possui produtos vinculados",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key ausente, inválida ou revogada.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requisições excedido. Consulte Retry-After antes de tentar novamente.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "description": "Limite configurado por minuto.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 60
+                }
+              },
+              "X-RateLimit-Remaining": {
+                "description": "Requisições restantes na janela atual.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 0
+                }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp do início da próxima janela.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "Retry-After": {
+                "description": "Segundos até uma nova tentativa.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 30
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v2/vendas": {
+      "get": {
+        "tags": [
+          "Vendas"
+        ],
+        "summary": "Listar todas as vendas",
+        "operationId": "listarTodos",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "description": "Zero-based page index (0..N)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "minimum": 0
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "description": "The size of the page to be returned",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 10,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Sorting criteria in the format: property,(asc|desc). Default sort order is ascending. Multiple sort criteria are supported.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "default": [
+                "dataVenda,ASC"
+              ],
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "description": "Obrigatório na V2; use exatamente o valor 2.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista paginada de vendas retornada com sucesso",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedModelEntityModelVenda"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key ausente, inválida ou revogada.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requisições excedido. Consulte Retry-After antes de tentar novamente.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "description": "Limite configurado por minuto.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 60
+                }
+              },
+              "X-RateLimit-Remaining": {
+                "description": "Requisições restantes na janela atual.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 0
+                }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp do início da próxima janela.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "Retry-After": {
+                "description": "Segundos até uma nova tentativa.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 30
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Vendas"
+        ],
+        "summary": "Cadastrar nova venda",
+        "description": "Registra uma venda para um cliente existente, calcula o total pelos preços atuais e baixa uma unidade de cada produto.",
+        "operationId": "salvar",
+        "parameters": [
+          {
+            "name": "X-Idempotency-Key",
+            "in": "header",
+            "description": "Chave única por tentativa de venda; UUID é uma boa opção.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "1d8821c9-9b52-4c58-b714-bfa0c7a71dbd"
+          },
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          },
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "description": "Obrigatório na V2; use exatamente o valor 2.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          },
+          {
+            "name": "X-Idempotency-Key",
+            "in": "header",
+            "description": "Chave única da tentativa de venda. Reenvios iguais devolvem a resposta original.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "1d8821c9-9b52-4c58-b714-bfa0c7a71dbd"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Cliente, forma de pagamento e produtos distintos da venda.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Venda"
+              },
+              "example": {
+                "formaPagamento": "PIX",
+                "cliente": {
+                  "id": 1
+                },
+                "produtos": [
+                  {
+                    "id": 1
+                  }
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Venda criada com sucesso",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Dados inválidos",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key ausente, inválida ou revogada.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Estoque inexistente ou insuficiente",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requisições excedido. Consulte Retry-After antes de tentar novamente.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "description": "Limite configurado por minuto.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 60
+                }
+              },
+              "X-RateLimit-Remaining": {
+                "description": "Requisições restantes na janela atual.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 0
+                }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp do início da próxima janela.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "Retry-After": {
+                "description": "Segundos até uma nova tentativa.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 30
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Cliente ou produto não encontrado",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v2/auth/logout": {
+      "post": {
+        "tags": [
+          "Autenticação"
+        ],
+        "summary": "Revogar chave de API",
+        "description": "Revoga a chave informada no cabeçalho X-API-Key. Após a revogação, a chave não poderá mais acessar operações protegidas.",
+        "operationId": "logout",
+        "parameters": [
+          {
+            "name": "X-API-Key",
+            "in": "header",
+            "description": "Chave de API gerada na autenticação.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "description": "Obrigatório na V2; use exatamente o valor 2.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Solicitação de revogação processada."
+          },
+          "401": {
+            "description": "API Key ausente, inválida ou revogada.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requisições excedido. Consulte Retry-After antes de tentar novamente.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "description": "Limite configurado por minuto.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 60
+                }
+              },
+              "X-RateLimit-Remaining": {
+                "description": "Requisições restantes na janela atual.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 0
+                }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp do início da próxima janela.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "Retry-After": {
+                "description": "Segundos até uma nova tentativa.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 30
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v2/auth/login": {
+      "post": {
+        "tags": [
+          "Autenticação"
+        ],
+        "summary": "Autenticar usuário e gerar chave de API",
+        "description": "Valida o e-mail e a senha do usuário do PDV e gera uma chave de acesso. Utilize a chave no cabeçalho X-API-Key para acessar operações protegidas.",
+        "operationId": "login",
+        "parameters": [
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "description": "Obrigatório na V2; use exatamente o valor 2.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Autenticação realizada e chave de API gerada.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Dados de autenticação inválidos.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key ausente, inválida ou revogada.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requisições excedido. Consulte Retry-After antes de tentar novamente.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "description": "Limite configurado por minuto.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 60
+                }
+              },
+              "X-RateLimit-Remaining": {
+                "description": "Requisições restantes na janela atual.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 0
+                }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp do início da próxima janela.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "Retry-After": {
+                "description": "Segundos até uma nova tentativa.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 30
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/produtos": {
+      "get": {
+        "tags": [
+          "Produtos"
+        ],
+        "summary": "Listar todos os produtos",
+        "operationId": "listarTodos_1",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "description": "Zero-based page index (0..N)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "minimum": 0
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "description": "The size of the page to be returned",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 10,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Sorting criteria in the format: property,(asc|desc). Default sort order is ascending. Multiple sort criteria are supported.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "default": [
+                "nome,ASC"
+              ],
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "description": "Obrigatório na V2; use exatamente o valor 2.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista paginada de produtos retornada com sucesso",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedModelEntityModelProduto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key ausente, inválida ou revogada.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requisições excedido. Consulte Retry-After antes de tentar novamente.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "description": "Limite configurado por minuto.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 60
+                }
+              },
+              "X-RateLimit-Remaining": {
+                "description": "Requisições restantes na janela atual.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 0
+                }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp do início da próxima janela.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "Retry-After": {
+                "description": "Segundos até uma nova tentativa.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 30
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Produtos"
+        ],
+        "summary": "Cadastrar novo produto",
+        "description": "Cria um produto associado a uma categoria existente.",
+        "operationId": "salvar_1",
+        "parameters": [
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "description": "Obrigatório na V2; use exatamente o valor 2.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Produto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Produto criado com sucesso",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityModelProduto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Dados inválidos",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Categoria não encontrada",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key ausente, inválida ou revogada.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requisições excedido. Consulte Retry-After antes de tentar novamente.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "description": "Limite configurado por minuto.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 60
+                }
+              },
+              "X-RateLimit-Remaining": {
+                "description": "Requisições restantes na janela atual.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 0
+                }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp do início da próxima janela.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "Retry-After": {
+                "description": "Segundos até uma nova tentativa.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 30
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v2/estoques": {
+      "get": {
+        "tags": [
+          "Estoques"
+        ],
+        "summary": "Listar todos os estoques",
+        "operationId": "listarTodos_2",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "description": "Zero-based page index (0..N)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "minimum": 0
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "description": "The size of the page to be returned",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 10,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Sorting criteria in the format: property,(asc|desc). Default sort order is ascending. Multiple sort criteria are supported.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "description": "Obrigatório na V2; use exatamente o valor 2.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista paginada de estoques retornada com sucesso",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedModelEntityModelEstoque"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key ausente, inválida ou revogada.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requisições excedido. Consulte Retry-After antes de tentar novamente.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "description": "Limite configurado por minuto.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 60
+                }
+              },
+              "X-RateLimit-Remaining": {
+                "description": "Requisições restantes na janela atual.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 0
+                }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp do início da próxima janela.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "Retry-After": {
+                "description": "Segundos até uma nova tentativa.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 30
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Estoques"
+        ],
+        "summary": "Cadastrar novo estoque",
+        "description": "Cria o único registro de estoque para um produto existente.",
+        "operationId": "salvar_2",
+        "parameters": [
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "description": "Obrigatório na V2; use exatamente o valor 2.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Estoque"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Estoque criado com sucesso",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityModelEstoque"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Dados inválidos",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Produto não encontrado",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Produto já possui estoque cadastrado",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key ausente, inválida ou revogada.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requisições excedido. Consulte Retry-After antes de tentar novamente.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "description": "Limite configurado por minuto.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 60
+                }
+              },
+              "X-RateLimit-Remaining": {
+                "description": "Requisições restantes na janela atual.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 0
+                }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp do início da próxima janela.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "Retry-After": {
+                "description": "Segundos até uma nova tentativa.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 30
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v2/clientes": {
+      "get": {
+        "tags": [
+          "Clientes"
+        ],
+        "summary": "Listar todos os clientes",
+        "operationId": "listarTodos_3",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "description": "Zero-based page index (0..N)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "minimum": 0
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "description": "The size of the page to be returned",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 10,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Sorting criteria in the format: property,(asc|desc). Default sort order is ascending. Multiple sort criteria are supported.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "default": [
+                "nome,ASC"
+              ],
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "description": "Obrigatório na V2; use exatamente o valor 2.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista paginada de clientes retornada com sucesso",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedModelEntityModelCliente"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key ausente, inválida ou revogada.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requisições excedido. Consulte Retry-After antes de tentar novamente.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "description": "Limite configurado por minuto.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 60
+                }
+              },
+              "X-RateLimit-Remaining": {
+                "description": "Requisições restantes na janela atual.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 0
+                }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp do início da próxima janela.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "Retry-After": {
+                "description": "Segundos até uma nova tentativa.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 30
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Clientes"
+        ],
+        "summary": "Cadastrar novo cliente",
+        "description": "Cria um cliente com CPF único, telefone e dados obrigatórios válidos.",
+        "operationId": "salvar_3",
+        "parameters": [
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "description": "Obrigatório na V2; use exatamente o valor 2.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Cliente"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Cliente criado com sucesso",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityModelCliente"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Dados inválidos",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "CPF já cadastrado",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key ausente, inválida ou revogada.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requisições excedido. Consulte Retry-After antes de tentar novamente.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "description": "Limite configurado por minuto.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 60
+                }
+              },
+              "X-RateLimit-Remaining": {
+                "description": "Requisições restantes na janela atual.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 0
+                }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp do início da próxima janela.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "Retry-After": {
+                "description": "Segundos até uma nova tentativa.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 30
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v2/categorias": {
+      "get": {
+        "tags": [
+          "Categorias"
+        ],
+        "summary": "Listar todas as categorias",
+        "operationId": "listarTodos_4",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "description": "Zero-based page index (0..N)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "minimum": 0
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "description": "The size of the page to be returned",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 10,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Sorting criteria in the format: property,(asc|desc). Default sort order is ascending. Multiple sort criteria are supported.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "default": [
+                "nome,ASC"
+              ],
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "description": "Obrigatório na V2; use exatamente o valor 2.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista paginada de categorias retornada com sucesso",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedModelEntityModelCategoria"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key ausente, inválida ou revogada.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requisições excedido. Consulte Retry-After antes de tentar novamente.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "description": "Limite configurado por minuto.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 60
+                }
+              },
+              "X-RateLimit-Remaining": {
+                "description": "Requisições restantes na janela atual.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 0
+                }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp do início da próxima janela.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "Retry-After": {
+                "description": "Segundos até uma nova tentativa.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 30
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Categorias"
+        ],
+        "summary": "Cadastrar nova categoria",
+        "description": "Cria uma categoria única para classificação de produtos.",
+        "operationId": "salvar_4",
+        "parameters": [
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "description": "Obrigatório na V2; use exatamente o valor 2.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Categoria"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Categoria criada com sucesso",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityModelCategoria"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Dados inválidos",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Nome de categoria já cadastrado",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key ausente, inválida ou revogada.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requisições excedido. Consulte Retry-After antes de tentar novamente.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "description": "Limite configurado por minuto.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 60
+                }
+              },
+              "X-RateLimit-Remaining": {
+                "description": "Requisições restantes na janela atual.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 0
+                }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp do início da próxima janela.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "Retry-After": {
+                "description": "Segundos até uma nova tentativa.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 30
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v2/vendas/cliente/{clienteId}": {
+      "get": {
+        "tags": [
+          "Vendas"
+        ],
+        "summary": "Buscar vendas por cliente",
+        "operationId": "listarPorCliente",
+        "parameters": [
+          {
+            "name": "clienteId",
+            "in": "path",
+            "description": "Identificador do cliente",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "description": "Zero-based page index (0..N)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "minimum": 0
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "description": "The size of the page to be returned",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 10,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Sorting criteria in the format: property,(asc|desc). Default sort order is ascending. Multiple sort criteria are supported.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "default": [
+                "dataVenda,ASC"
+              ],
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "description": "Obrigatório na V2; use exatamente o valor 2.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista paginada de vendas retornada com sucesso",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedModelEntityModelVenda"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key ausente, inválida ou revogada.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requisições excedido. Consulte Retry-After antes de tentar novamente.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "description": "Limite configurado por minuto.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 60
+                }
+              },
+              "X-RateLimit-Remaining": {
+                "description": "Requisições restantes na janela atual.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 0
+                }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp do início da próxima janela.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "Retry-After": {
+                "description": "Segundos até uma nova tentativa.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 30
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v2/produtos/busca": {
+      "get": {
+        "tags": [
+          "Produtos"
+        ],
+        "summary": "Buscar produtos por nome",
+        "operationId": "listarPorNome",
+        "parameters": [
+          {
+            "name": "nome",
+            "in": "query",
+            "description": "Trecho do nome do produto para busca",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "description": "Zero-based page index (0..N)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "minimum": 0
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "description": "The size of the page to be returned",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 10,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Sorting criteria in the format: property,(asc|desc). Default sort order is ascending. Multiple sort criteria are supported.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "description": "Obrigatório na V2; use exatamente o valor 2.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista paginada de produtos retornada com sucesso",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedModelEntityModelProduto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key ausente, inválida ou revogada.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requisições excedido. Consulte Retry-After antes de tentar novamente.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "description": "Limite configurado por minuto.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 60
+                }
+              },
+              "X-RateLimit-Remaining": {
+                "description": "Requisições restantes na janela atual.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 0
+                }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp do início da próxima janela.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "Retry-After": {
+                "description": "Segundos até uma nova tentativa.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 30
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v2/estoques/produto/{produtoId}": {
+      "get": {
+        "tags": [
+          "Estoques"
+        ],
+        "summary": "Buscar estoque por produto",
+        "description": "Retorna o único registro de estoque associado ao produto informado.",
+        "operationId": "listarPorProduto",
+        "parameters": [
+          {
+            "name": "produtoId",
+            "in": "path",
+            "description": "Identificador do produto associado",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "description": "Obrigatório na V2; use exatamente o valor 2.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Estoque encontrado",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityModelEstoque"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Produto sem estoque cadastrado",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key ausente, inválida ou revogada.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requisições excedido. Consulte Retry-After antes de tentar novamente.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "description": "Limite configurado por minuto.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 60
+                }
+              },
+              "X-RateLimit-Remaining": {
+                "description": "Requisições restantes na janela atual.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 0
+                }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp do início da próxima janela.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "Retry-After": {
+                "description": "Segundos até uma nova tentativa.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 30
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v2/estoques/baixo": {
+      "get": {
+        "tags": [
+          "Estoques"
+        ],
+        "summary": "Listar estoques com quantidade baixa",
+        "operationId": "listarEstoqueBaixo",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "description": "Zero-based page index (0..N)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "minimum": 0
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "description": "The size of the page to be returned",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 10,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Sorting criteria in the format: property,(asc|desc). Default sort order is ascending. Multiple sort criteria are supported.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "description": "Obrigatório na V2; use exatamente o valor 2.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista paginada de estoques baixos retornada com sucesso",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedModelEntityModelEstoque"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key ausente, inválida ou revogada.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requisições excedido. Consulte Retry-After antes de tentar novamente.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "description": "Limite configurado por minuto.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 60
+                }
+              },
+              "X-RateLimit-Remaining": {
+                "description": "Requisições restantes na janela atual.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 0
+                }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp do início da próxima janela.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "Retry-After": {
+                "description": "Segundos até uma nova tentativa.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 30
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v2/clientes/cpf/{cpf}": {
+      "get": {
+        "tags": [
+          "Clientes"
+        ],
+        "summary": "Buscar cliente por CPF",
+        "operationId": "listarPorCpf",
+        "parameters": [
+          {
+            "name": "cpf",
+            "in": "path",
+            "description": "CPF com 11 digitos, sem mascara",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "description": "Obrigatório na V2; use exatamente o valor 2.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cliente encontrado",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityModelCliente"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Cliente não encontrado",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key ausente, inválida ou revogada.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requisições excedido. Consulte Retry-After antes de tentar novamente.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "description": "Limite configurado por minuto.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 60
+                }
+              },
+              "X-RateLimit-Remaining": {
+                "description": "Requisições restantes na janela atual.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 0
+                }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp do início da próxima janela.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "Retry-After": {
+                "description": "Segundos até uma nova tentativa.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 30
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v2/categorias/busca": {
+      "get": {
+        "tags": [
+          "Categorias"
+        ],
+        "summary": "Buscar categorias por nome",
+        "operationId": "listarPorNome_1",
+        "parameters": [
+          {
+            "name": "nome",
+            "in": "query",
+            "description": "Trecho do nome da categoria para busca",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "description": "Zero-based page index (0..N)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "minimum": 0
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "description": "The size of the page to be returned",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 10,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Sorting criteria in the format: property,(asc|desc). Default sort order is ascending. Multiple sort criteria are supported.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "X-API-Version",
+            "in": "header",
+            "description": "Obrigatório na V2; use exatamente o valor 2.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista paginada de categorias retornada com sucesso",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedModelEntityModelCategoria"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key ausente, inválida ou revogada.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requisições excedido. Consulte Retry-After antes de tentar novamente.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "description": "Limite configurado por minuto.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 60
+                }
+              },
+              "X-RateLimit-Remaining": {
+                "description": "Requisições restantes na janela atual.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 0
+                }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp do início da próxima janela.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "Retry-After": {
+                "description": "Segundos até uma nova tentativa.",
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 30
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Categoria": {
+        "type": "object",
+        "description": "Dados de uma categoria usada para classificar produtos",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "example": 1,
+            "readOnly": true
+          },
+          "nome": {
+            "type": "string",
+            "description": "Nome único da categoria",
+            "example": "Camisetas",
+            "maxLength": 100,
+            "minLength": 3
+          },
+          "descricao": {
+            "type": "string",
+            "example": "Camisetas e regatas para o dia a dia",
+            "maxLength": 500,
+            "minLength": 0
+          }
+        },
+        "required": [
+          "descricao",
+          "nome"
+        ]
+      },
+      "Cliente": {
+        "type": "object",
+        "description": "Dados de identificacao e contato de um cliente",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "example": 1,
+            "readOnly": true
+          },
+          "nome": {
+            "type": "string",
+            "example": "Maria Silva",
+            "maxLength": 100,
+            "minLength": 3
+          },
+          "idade": {
+            "type": "integer",
+            "format": "int32",
+            "example": 25,
+            "maximum": 130,
+            "minimum": 1
+          },
+          "genero": {
+            "type": "string",
+            "enum": [
+              "MASCULINO",
+              "FEMININO",
+              "OUTRO"
+            ],
+            "example": "FEMININO"
+          },
+          "telefone": {
+            "type": "string",
+            "description": "Telefone com 10 ou 11 dígitos, sem máscara",
+            "example": "11999999999",
+            "minLength": 1,
+            "pattern": "\\d{10,11}"
+          },
+          "cpf": {
+            "type": "string",
+            "description": "CPF com 11 dígitos, sem máscara",
+            "example": "12345678901",
+            "minLength": 1,
+            "pattern": "\\d{11}"
+          }
+        },
+        "required": [
+          "cpf",
+          "genero",
+          "idade",
+          "nome",
+          "telefone"
+        ]
+      },
+      "Produto": {
+        "type": "object",
+        "description": "Dados de um produto comercializado pela loja",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "example": 1,
+            "readOnly": true
+          },
+          "nome": {
+            "type": "string",
+            "example": "Camiseta básica",
+            "maxLength": 100,
+            "minLength": 3
+          },
+          "descricao": {
+            "type": "string",
+            "example": "Camiseta de algodão preta",
+            "maxLength": 500,
+            "minLength": 0
+          },
+          "preco": {
+            "type": "number",
+            "description": "Preço unitário positivo",
+            "example": 79.9,
+            "minimum": 0.01
+          },
+          "tamanho": {
+            "type": "string",
+            "enum": [
+              "PP",
+              "P",
+              "M",
+              "G",
+              "GG"
+            ],
+            "example": "M"
+          },
+          "categoria": {
+            "$ref": "#/components/schemas/Categoria",
+            "description": "Informe ao menos o id de uma categoria existente",
+            "example": {
+              "id": 1
+            }
+          }
+        },
+        "required": [
+          "categoria",
+          "descricao",
+          "nome",
+          "preco",
+          "tamanho"
+        ]
+      },
+      "Venda": {
+        "type": "object",
+        "description": "Dados de uma venda e seus produtos distintos",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "example": 1,
+            "readOnly": true
+          },
+          "dataVenda": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2026-11-11T10:30:00",
+            "readOnly": true
+          },
+          "formaPagamento": {
+            "type": "string",
+            "enum": [
+              "DINHEIRO",
+              "CARTAO_CREDITO",
+              "CARTAO_DEBITO",
+              "PIX"
+            ],
+            "example": "PIX"
+          },
+          "valorTotal": {
+            "type": "number",
+            "description": "Total calculado no servidor",
+            "example": 79.9,
+            "readOnly": true
+          },
+          "cliente": {
+            "$ref": "#/components/schemas/Cliente",
+            "description": "Informe ao menos o id de um cliente existente",
+            "example": {
+              "id": 1
+            }
+          },
+          "produtos": {
+            "type": "array",
+            "description": "Produtos distintos da venda; cada produto representa uma unidade",
+            "example": [
+              {
+                "id": 1
+              },
+              {
+                "id": 2
+              }
+            ],
+            "items": {
+              "$ref": "#/components/schemas/Produto"
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "cliente",
+          "formaPagamento",
+          "produtos"
+        ]
+      },
+      "EntityModelVenda": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "example": 1,
+            "readOnly": true
+          },
+          "dataVenda": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2026-11-11T10:30:00",
+            "readOnly": true
+          },
+          "formaPagamento": {
+            "type": "string",
+            "enum": [
+              "DINHEIRO",
+              "CARTAO_CREDITO",
+              "CARTAO_DEBITO",
+              "PIX"
+            ],
+            "example": "PIX"
+          },
+          "valorTotal": {
+            "type": "number",
+            "description": "Total calculado no servidor",
+            "example": 79.9,
+            "readOnly": true
+          },
+          "cliente": {
+            "$ref": "#/components/schemas/Cliente",
+            "description": "Informe ao menos o id de um cliente existente",
+            "example": {
+              "id": 1
+            }
+          },
+          "produtos": {
+            "type": "array",
+            "description": "Produtos distintos da venda; cada produto representa uma unidade",
+            "example": [
+              {
+                "id": 1
+              },
+              {
+                "id": 2
+              }
+            ],
+            "items": {
+              "$ref": "#/components/schemas/Produto"
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "_links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "required": [
+          "cliente",
+          "formaPagamento",
+          "produtos"
+        ]
+      },
+      "EntityModelProduto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "example": 1,
+            "readOnly": true
+          },
+          "nome": {
+            "type": "string",
+            "example": "Camiseta básica",
+            "maxLength": 100,
+            "minLength": 3
+          },
+          "descricao": {
+            "type": "string",
+            "example": "Camiseta de algodão preta",
+            "maxLength": 500,
+            "minLength": 0
+          },
+          "preco": {
+            "type": "number",
+            "description": "Preço unitário positivo",
+            "example": 79.9,
+            "minimum": 0.01
+          },
+          "tamanho": {
+            "type": "string",
+            "enum": [
+              "PP",
+              "P",
+              "M",
+              "G",
+              "GG"
+            ],
+            "example": "M"
+          },
+          "categoria": {
+            "$ref": "#/components/schemas/Categoria",
+            "description": "Informe ao menos o id de uma categoria existente",
+            "example": {
+              "id": 1
+            }
+          },
+          "_links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "required": [
+          "categoria",
+          "descricao",
+          "nome",
+          "preco",
+          "tamanho"
+        ]
+      },
+      "Estoque": {
+        "type": "object",
+        "description": "Saldo e nivel minimo de estoque de um produto",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "example": 1,
+            "readOnly": true
+          },
+          "quantidade": {
+            "type": "integer",
+            "format": "int32",
+            "example": 20,
+            "minimum": 0
+          },
+          "estoqueMinimo": {
+            "type": "integer",
+            "format": "int32",
+            "example": 5,
+            "minimum": 0
+          },
+          "produto": {
+            "$ref": "#/components/schemas/Produto",
+            "description": "Informe ao menos o id de um produto existente",
+            "example": {
+              "id": 1
+            }
+          }
+        },
+        "required": [
+          "estoqueMinimo",
+          "produto",
+          "quantidade"
+        ]
+      },
+      "EntityModelEstoque": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "example": 1,
+            "readOnly": true
+          },
+          "quantidade": {
+            "type": "integer",
+            "format": "int32",
+            "example": 20,
+            "minimum": 0
+          },
+          "estoqueMinimo": {
+            "type": "integer",
+            "format": "int32",
+            "example": 5,
+            "minimum": 0
+          },
+          "produto": {
+            "$ref": "#/components/schemas/Produto",
+            "description": "Informe ao menos o id de um produto existente",
+            "example": {
+              "id": 1
+            }
+          },
+          "_links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "required": [
+          "estoqueMinimo",
+          "produto",
+          "quantidade"
+        ]
+      },
+      "EntityModelCliente": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "example": 1,
+            "readOnly": true
+          },
+          "nome": {
+            "type": "string",
+            "example": "Maria Silva",
+            "maxLength": 100,
+            "minLength": 3
+          },
+          "idade": {
+            "type": "integer",
+            "format": "int32",
+            "example": 25,
+            "maximum": 130,
+            "minimum": 1
+          },
+          "genero": {
+            "type": "string",
+            "enum": [
+              "MASCULINO",
+              "FEMININO",
+              "OUTRO"
+            ],
+            "example": "FEMININO"
+          },
+          "telefone": {
+            "type": "string",
+            "description": "Telefone com 10 ou 11 dígitos, sem máscara",
+            "example": "11999999999",
+            "minLength": 1,
+            "pattern": "\\d{10,11}"
+          },
+          "cpf": {
+            "type": "string",
+            "description": "CPF com 11 dígitos, sem máscara",
+            "example": "12345678901",
+            "minLength": 1,
+            "pattern": "\\d{11}"
+          },
+          "_links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "required": [
+          "cpf",
+          "genero",
+          "idade",
+          "nome",
+          "telefone"
+        ]
+      },
+      "EntityModelCategoria": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "example": 1,
+            "readOnly": true
+          },
+          "nome": {
+            "type": "string",
+            "description": "Nome único da categoria",
+            "example": "Camisetas",
+            "maxLength": 100,
+            "minLength": 3
+          },
+          "descricao": {
+            "type": "string",
+            "example": "Camisetas e regatas para o dia a dia",
+            "maxLength": 500,
+            "minLength": 0
+          },
+          "_links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "required": [
+          "descricao",
+          "nome"
+        ]
+      },
+      "LoginRequest": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "E-mail cadastrado do usuário do PDV.",
+            "example": "operador@pdv.com",
+            "maxLength": 254,
+            "minLength": 0
+          },
+          "senha": {
+            "type": "string",
+            "description": "Senha cadastrada do usuário.",
+            "example": "SenhaSegura123",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "email",
+          "senha"
+        ]
+      },
+      "LoginResponse": {
+        "type": "object",
+        "properties": {
+          "apiKey": {
+            "type": "string",
+            "description": "Chave secreta gerada para autenticação."
+          },
+          "usuarioId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "nome": {
+            "type": "string"
+          },
+          "mensagem": {
+            "type": "string"
+          }
+        }
+      },
+      "PageMetadata": {
+        "type": "object",
+        "properties": {
+          "size": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "totalElements": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "totalPages": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "number": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "PagedModelEntityModelVenda": {
+        "type": "object",
+        "properties": {
+          "_embedded": {
+            "type": "object",
+            "properties": {
+              "vendaList": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/EntityModelVenda"
+                }
+              }
+            }
+          },
+          "_links": {
+            "$ref": "#/components/schemas/Links"
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageMetadata"
+          }
+        }
+      },
+      "PagedModelEntityModelProduto": {
+        "type": "object",
+        "properties": {
+          "_embedded": {
+            "type": "object",
+            "properties": {
+              "produtoList": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/EntityModelProduto"
+                }
+              }
+            }
+          },
+          "_links": {
+            "$ref": "#/components/schemas/Links"
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageMetadata"
+          }
+        }
+      },
+      "PagedModelEntityModelEstoque": {
+        "type": "object",
+        "properties": {
+          "_embedded": {
+            "type": "object",
+            "properties": {
+              "estoqueList": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/EntityModelEstoque"
+                }
+              }
+            }
+          },
+          "_links": {
+            "$ref": "#/components/schemas/Links"
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageMetadata"
+          }
+        }
+      },
+      "PagedModelEntityModelCliente": {
+        "type": "object",
+        "properties": {
+          "_embedded": {
+            "type": "object",
+            "properties": {
+              "clienteList": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/EntityModelCliente"
+                }
+              }
+            }
+          },
+          "_links": {
+            "$ref": "#/components/schemas/Links"
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageMetadata"
+          }
+        }
+      },
+      "PagedModelEntityModelCategoria": {
+        "type": "object",
+        "properties": {
+          "_embedded": {
+            "type": "object",
+            "properties": {
+              "categoriaList": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/EntityModelCategoria"
+                }
+              }
+            }
+          },
+          "_links": {
+            "$ref": "#/components/schemas/Links"
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageMetadata"
+          }
+        }
+      },
+      "Link": {
+        "type": "object",
+        "properties": {
+          "href": {
+            "type": "string"
+          },
+          "hreflang": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "deprecation": {
+            "type": "string"
+          },
+          "profile": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "templated": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Links": {
+        "type": "object",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/Link"
+        }
+      },
+      "ApiErrorResponse": {
+        "type": "object",
+        "description": "Resposta de erro padronizada pelo ApiExceptionHandler",
+        "properties": {
+          "type": {
+            "type": "string",
+            "example": "https://api.pdv-loja.local/errors/400"
+          },
+          "title": {
+            "type": "string",
+            "example": "Dados inválidos"
+          },
+          "status": {
+            "type": "integer",
+            "format": "int32",
+            "example": 400
+          },
+          "detail": {
+            "type": "string",
+            "example": "Corrija os campos informados e envie a requisição novamente."
+          },
+          "mensagem": {
+            "type": "string",
+            "example": "Corrija os campos informados e envie a requisição novamente."
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "detalhes": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "apiKeyAuth": {
+        "type": "apiKey",
+        "description": "Informe em X-API-Key somente o valor de `apiKey` retornado pelo login. A chave é mostrada uma única vez.",
+        "name": "X-API-Key",
+        "in": "header"
+      }
+    }
+  }
+}

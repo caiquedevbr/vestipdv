@@ -1,0 +1,14 @@
+{
+  "name": "pdv-web-v2",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Frontend HTML/CSS/JavaScript para API V2 do Sistema PDV",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

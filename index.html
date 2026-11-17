@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101d34">
+  <meta name="description" content="Painel de operações do PDV de roupas integrado à API V2 Spring Boot.">
+  <title>Vesti PDV | Painel administrativo</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+
+<body>
+  <div id="app" class="shell">
+    <aside class="sidebar" id="sidebar">
+      <a class="brand" href="#dashboard" aria-label="Vesti PDV, início">
+        <span class="brand-mark">V<span class="brand-pip">.</span></span>
+        <span><strong>vesti<span class="brand-accent">pdv</span></strong><small>CONTROLE DE LOJA</small></span>
+      </a>
+      <div class="sidebar-section">VISÃO GERAL</div>
+      <nav class="nav" aria-label="Menu principal" id="main-nav">
+        <button class="nav-link active" data-page="dashboard"><span class="nav-icon">▦</span> Visão geral</button>
+        <div class="sidebar-section secondary-heading">GERENCIAMENTO</div>
+        <button class="nav-link" data-page="vendas"><span class="nav-icon">◫</span> Vendas</button>
+        <button class="nav-link" data-page="produtos"><span class="nav-icon">◈</span> Produtos</button>
+        <button class="nav-link" data-page="estoques"><span class="nav-icon">▤</span> Estoque</button>
+        <button class="nav-link" data-page="clientes"><span class="nav-icon">♙</span> Clientes</button>
+        <button class="nav-link" data-page="categorias"><span class="nav-icon">▧</span> Categorias</button>
+        <div class="sidebar-section secondary-heading">SISTEMA</div>
+        <button class="nav-link" data-page="integracao"><span class="nav-icon">⌁</span> API e monitoramento</button>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="api-mini"><span class="status-dot" id="sidebar-dot"></span><span id="sidebar-status">Aguardando
+            conexão</span></div>
+        <div class="side-foot">API V2 <span>•</span> Java + Spring Boot</div>
+      </div>
+    </aside>
+
+    <div class="main-wrap">
+      <header class="topbar">
+        <div class="top-left">
+          <button class="icon-button mobile-menu" id="menu-toggle" aria-label="Abrir menu">☰</button>
+          <div class="breadcrumb"><span>Workspace</span><span class="chevron">/</span><strong
+              id="breadcrumb-title">Visão geral</strong></div>
+        </div>
+        <div class="top-right">
+          <span class="environment-pill"><span class="green-dot"></span> Ambiente local</span>
+          <button class="icon-button" id="refresh-btn" aria-label="Atualizar dados" title="Atualizar dados">↻</button>
+          <button class="account-pill" id="account-btn" title="Gerenciar sessão"><span class="avatar"
+              id="avatar-initials">PD</span><span id="account-name">Não autenticado</span><span
+              class="account-arrow">⌄</span></button>
+        </div>
+      </header>
+      <main id="content" class="main-content" tabindex="-1">
+        <div class="loading-screen">
+          <div class="spinner"></div>Carregando painel…
+        </div>
+      </main>
+      <footer class="footer"><span>Vesti PDV • Interface para demonstração acadêmica</span><span>API Spring Boot V2
+          <span class="footer-sep">•</span> Sem frameworks</span></footer>
+    </div>
+  </div>
+
+  <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
+  <div id="modal-root"></div>
+
+  <div class="login-overlay" id="login-overlay" role="dialog" aria-modal="true" aria-label="Login no PDV">
+    <div class="login-art">
+      <div class="login-art-inner">
+        <div class="login-logo"><span>V<span>.</span></span> vesti<span>pdv</span></div>
+        <div class="login-illustration"><span class="shape shape-one"></span><span class="shape shape-two"></span><span
+            class="shape shape-three"></span>
+          <div class="floating-card">
+            <div class="floating-icon">▥</div>
+            <div><strong>Seu negócio em movimento.</strong><small>Produtos, vendas e estoque em um só lugar.</small>
+            </div>
+          </div>
+        </div>
+        <h1>Gestão mais simples.<br><em>Resultados mais claros.</em></h1>
+        <p>Uma interface integrada à sua API de ponto de venda, feita para operar e testar os recursos da V2.</p>
+        <div class="login-art-footer">API V2 <span>✦</span> AUTENTICAÇÃO POR CHAVE</div>
+      </div>
+    </div>
+    <div class="login-panel">
+      <form id="login-form" class="login-form">
+        <div class="eyebrow">BEM-VINDO DE VOLTA</div>
+        <h2>Acesse seu painel</h2>
+        <p class="login-lead">Entre com as credenciais de um usuário do PDV já cadastrado no backend.</p>
+        <label class="field"><span>E-mail</span><input name="email" type="email" placeholder="operador@pdv.com"
+            autocomplete="username" required maxlength="254"></label>
+        <label class="field"><span>Senha</span><input name="senha" type="password" placeholder="Sua senha"
+            autocomplete="current-password" required></label>
+        <div id="login-error" class="form-error hidden" role="alert"></div>
+        <button class="btn btn-primary btn-block login-submit" type="submit" id="login-submit">Entrar no sistema
+          <span>→</span></button>
+        <details class="api-settings">
+          <summary>Configuração da API</summary><label class="field"><span>URL base (raiz)</span><input id="api-root"
+              type="text" placeholder="/api" spellcheck="false"></label>
+          <p>Use <code>/api</code> com o servidor incluído (recomendado). Para acessar o Spring diretamente, configure
+            <code>http://localhost:8080/api</code> e habilite CORS no backend.
+          </p><button class="btn btn-secondary btn-sm" type="button" id="save-api-url">Salvar URL</button>
+        </details>
+        <div class="login-note">🔒 A chave de API permanece apenas na memória desta aba e é descartada ao recarregar ou
+          sair.</div>
+      </form>
+    </div>
+  </div>
+  <script type="module" src="./js/app.js"></script>
+</body>
+
+</html>
