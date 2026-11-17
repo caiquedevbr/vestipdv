@@ -16,7 +16,7 @@ Painel básico e responsivo em **HTML, CSS e JavaScript puro**, sem framework e 
 3. Abra **http://localhost:5500**.
 4. Faça login usando o **e-mail e a senha de um `UsuarioSistema` existente** no banco do backend. O frontend não gera credenciais automaticamente.
 
-O `server.mjs` entrega arquivos estáticos e encaminha todas as requisições `/api/*` ao Spring Boot em `http://localhost:8080`, evitando problemas de CORS durante desenvolvimento. O proxy não encaminha o cabeçalho `Origin`: para o navegador a chamada já é same-origin (`http://localhost:5500/api/*`), e o Spring não deve tratá-la como uma chamada CORS. Para mudar o backend:
+O `server.mjs` entrega arquivos estáticos e encaminha todas as requisições `/api/*` à API hospedada em `https://pdv-loja-roupas-api.onrender.com`, evitando problemas de CORS durante desenvolvimento. O proxy não encaminha o cabeçalho `Origin`: para o navegador a chamada já é same-origin (`http://localhost:5500/api/*`), e a API não deve tratá-la como uma chamada CORS. Para usar outro backend:
 
 ```bash
 # PowerShell

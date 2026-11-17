@@ -6,7 +6,8 @@ import { dirname, resolve, extname, sep } from "node:path";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 5500);
-const BACKEND = process.env.PDV_API_URL || "http://localhost:8080";
+const BACKEND =
+  process.env.PDV_API_URL || "https://pdv-loja-roupas-api.onrender.com";
 const types = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
